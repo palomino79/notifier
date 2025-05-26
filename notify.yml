@@ -1,0 +1,22 @@
+birthdays:
+    josh:
+        title: Josh's birthday 
+        for: Josh Smith
+        date: September 22
+        notify_before_days: 2
+        notify_time: 12:00 PM
+        repeat: true
+
+holidays:
+    mothers_day:
+        title: mother's day 
+        date: 
+            month: May 
+            weekday: Sunday
+            day_n: 2
+        notify_before_days: 3
+        repeat: true
+        notify_time: 12:00 PM
+    july_fourth:
+        title: Fourth of July 
+        date: July 4th
