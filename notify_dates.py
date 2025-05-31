@@ -1,11 +1,18 @@
 from datetime import datetime, timedelta
 from dataclasses import dataclass
-from typing import Union, List, Optional
+from typing import Union, List
 from functools import cached_property
 import logging
+from cron import TIMEZONE
 
 logger = logging.getLogger("notify")
 logging.basicConfig()
+
+
+class NotifyTimeAbsentError(Exception): ...
+
+
+class DateAbsentError(Exception): ...
 
 
 weekday_map = (
@@ -41,7 +48,7 @@ def collect_weekday(
     if isinstance(day_of_week, str):
         day_of_week = weekday_map.index(day_of_week.lower())
     if isinstance(month, str):
-        month = month_map.index(month.lower())
+        month = month_map.index(month.lower()) + 1
 
     res = []
     current_date = datetime(year=year, month=month, day=1)
@@ -59,55 +66,70 @@ class NotifyDate:
     data: dict
 
     @cached_property
-    def date(self):
-        return self.data.get("date")
+    def title(self):
+        return self.data.get("title", "No title.")
 
     @cached_property
+    def date(self) -> datetime:
+        date = self.data.get("date")
+        if not date:
+            raise DateAbsentError
+        return datetime.strptime(date, "%B %d") if date is str else date
+
+    @property
     def now(self):
-        return
+        return datetime.now(tz=TIMEZONE)
 
     @cached_property
-    def notify_before_days(self):
-        return self.data.get("notify_before_days")
+    def notify_before_days(self) -> int:
+        return self.data.get("notify_before_days", 0)
 
-    def trigger_time(self, notify_time: str) -> datetime:
-        day = self.now.day
-        month = self.now.month
-        year = self.now.year
-        return datetime.strptime(
-            f"{notify_time} {day} {month} {year}", "%I:%M %d %m %y"
+    @property
+    def notify_time(self):
+        notify_time = self.data.get("notify_time")
+        if not notify_time:
+            raise NotifyTimeAbsentError
+        # time without date or tzinfo
+        t = datetime.strptime(f"{notify_time}", "%I:%M %p").time()
+        return datetime(
+            year=self.now.year,
+            month=self.now.month,
+            day=self.now.day,
+            hour=t.hour,
+            minute=t.minute,
+            tzinfo=TIMEZONE,
         )
 
     def should_notify(self, trigger_time: datetime) -> bool:
         if self.datetime:
-            delta: timedelta = self.datetime - trigger_time
-            if delta.days <= self.notify_before_days:
-                seconds = delta.seconds
-                return not delta.seconds or not (seconds % (60 * 60 * 24))
+            try:
+                delta: timedelta = self.datetime - trigger_time
+            except TypeError:
+                return False
+            if (delta.days >= 0) and (delta.days <= self.notify_before_days):
+                seconds = delta.total_seconds()
+                return not (seconds % (60 * 60 * 24))
         return False
 
     @cached_property
-    def datetime(self) -> Optional[datetime]:
-        try:
-            if isinstance(self.date, str):
-                time = self.data.get("notify_time")
-                date = self.data.get("date")
-                as_dt = datetime.strptime(
-                    f"{time} {date} {self.now.year}", "%I:%M %B %d %Y"
-                )
-            elif isinstance(self.date, dict):
-                as_dt = self.conditional_date
-        except (ValueError, KeyError) as e:
-            logging.error(e, exc_info=True)
-            return None
-        else:
-            return as_dt
+    def datetime(self) -> datetime:
+        if isinstance(self.date, str):
+            return self.notify_time.replace(
+                year=self.now.year, month=self.date.month, day=self.date.day
+            )
+        elif isinstance(self.date, dict):
+            return self.notify_time.replace(
+                year=self.conditional_date.year,
+                month=self.conditional_date.month,
+                day=self.conditional_date.day,
+            )
+        raise ValueError
 
     @cached_property
-    def conditional_date(self) -> datetime:
-        month = self.data.date["month"]  # type: ignore
-        weekday = self.data.date["weekday"]  # type: ignore
-        day_n = self.data.date["day_n"]  # type: ignore
+    def conditional_date(self) -> datetime:  # type: ignore
+        month = self.date["month"]  # type: ignore
+        weekday = self.date["weekday"]  # type: ignore
+        day_n = self.date["day_n"]  # type: ignore
 
         weekdays = collect_weekday(weekday, month, self.now.year)
         if not isinstance(day_n, int):
