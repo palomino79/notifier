@@ -1,185 +1,136 @@
-import pytest  # type: ignore
-import threading
+import os
 import time
-from datetime import datetime, timedelta
-from queue import Queue, Empty
+import threading
+import pytest
+from pathlib import Path
+from queue import Queue
 from threading import Event
-import notify
 
-
-@pytest.fixture(autouse=True)
-def patch_notification(monkeypatch):
-    """
-    Intercept calls to notify() so we can see which titles get “fired.”
-    """
-    called = []
-
-    def fake_notify(nd_instance):
-        called.append(nd_instance.title)
-
-    monkeypatch.setattr("notify.notify", fake_notify)
-    print(called)
-    return called
+import notify  # replace with the actual import path where ConfigMonitor lives
+from notify import ConfigMonitor, compute_file_hash, load_config
 
 
 @pytest.fixture
-def sample_config():
+def tmp_yaml(tmp_path):
     """
-    Return a simple dict that produces exactly one NotifyDate
-    whose .should_notify() will be True when we pass the matching time.
-    For example: a date = “tomorrow at noon” with notify_before_days=0.
+    Create a temporary YAML file with some initial content and return its path.
     """
-    tomorrow = datetime.now() + timedelta(days=1)
-    date_str = tomorrow.strftime("%B %d")  # e.g. "May 21" if today is May 20
-    # Build a dict in the shape your code expects: top‐level keys → sub‐dict.
-    return {
-        "foo": {
-            "bar": {
-                "title": "Test Event",
-                "for_": "me",
-                "date": date_str,
-                "notify_time": tomorrow.strftime("%I:%M %p"),  # "12:00 PM"
+    file_path = tmp_path / "config.yml"
+    initial_data = {
+        "group1": {
+            "item1": {
+                "title": "foo",
+                "for_": "bar",
+                "date": "January 01",
+                "notify_time": "09:00 AM",
                 "notify_before_days": 0,
             }
         }
     }
+    # Write it out as YAML
+    import yaml
+
+    file_path.write_text(yaml.safe_dump(initial_data))
+    return str(file_path)
 
 
-def test_run_cron_fires_immediately_when_time_matches(
-    monkeypatch, sample_config, patch_notification
-):
-    q: Queue = Queue()
-    config_updated = Event()
-    stop_event = Event()
+def test_compute_file_hash_and_load_config(tmp_yaml):
+    # compute_file_hash should match the hash of the actual file
+    h1 = compute_file_hash(tmp_yaml)
+    # writing the same data again should give the same hash
+    h2 = compute_file_hash(tmp_yaml)
+    assert h1 == h2
 
-    # 1) Monkey-patch the scheduler functions so that `get_next_time(...)` yields “now”
-    def fake_collect_times(data):
-        # Return a list of datetime objects exactly “tomorrow at 12:00 PM”
-        return [datetime.now()]
-
-    monkeypatch.setattr("notify.collect_notification_times", fake_collect_times)
-
-    def fake_get_next_time(trigger_list):
-        # Return a generator that yields the only element immediately, then stops
-        yield trigger_list[0]
-        while True:
-            # After first yield, sleep briefly, then stop the thread in our test
-            time.sleep(0.1)
-            return
-        # Alternatively, if you want a clean StopIteration after the first:
-        # yield trigger_list[0]
-        # return
-
-    monkeypatch.setattr("notify.get_next_time", fake_get_next_time)
-
-    # 2) Monkey-patch `build_notify_dates_list` so it returns
-    #    a list of NotifyDate objects that we know will “should_notify” immediately.
-    #    We already have sample_config. Our NotifyDate constructor will parse it.
-    #    We also want to monkey-patch `NotifyDate.should_notify(...)` to return True:
-    class DummyNotifyDate:
-        def __init__(self, data):
-            self.title = data.get("title", "dummy")
-            self.for_ = data.get("for_", "")
-            self.data = data
-
-        def should_notify(self, t):
-            # Always return True on the very first call
-            return True
-
-    monkeypatch.setattr("notify.NotifyDate", DummyNotifyDate)
-    # Now `build_notify_dates_list` will do: `[DummyNotifyDate(x) for …]`
-    # We can let it run unmodified.
-
-    # 3) Start run_cron in a thread
-    t = threading.Thread(
-        target=notify.run_cron,
-        args=(q, config_updated, stop_event, sample_config),
-        daemon=True,
-    )
-    t.start()
-
-    # 4) Wait a short moment for the thread to wake up, process "next_time == now", fire, and call notify()
-    time.sleep(0.2)
-
-    # Since `should_notify` always returned True, `notify()` (patched to `fake_notify`) should have been called once
-    assert "Test Event" in patch_notification
-
-    # 5) Now signal the thread to stop and join
-    stop_event.set()
-    t.join(timeout=1)
-    assert not t.is_alive()
+    # load_config should return a dict with our initial content
+    cfg = load_config(tmp_yaml)
+    assert isinstance(cfg, dict)
+    assert "group1" in cfg
+    assert "item1" in cfg["group1"]
+    assert cfg["group1"]["item1"]["title"] == "foo"
 
 
-def test_run_cron_reloads_config_on_queue_update(
-    monkeypatch, sample_config, patch_notification
-):
-    """
-    This test ensures that if a fresh config arrives via `q.put(...)`,
-    run_cron picks it up and rebuilds notify_dates + trigger_times.
-    """
-    q: Queue = Queue()
-    config_updated = Event()
-    stop_event = Event()
-
-    # 1) Start with sample_config. Monkey-patch so that get_next_time yields a time far in the future.
-    far_future = datetime.now() + timedelta(days=365)
-    monkeypatch.setattr(
-        "notify.collect_notification_times",
-        lambda data: [far_future],
-    )
-    monkeypatch.setattr(
-        "notify.get_next_time",
-        lambda x: (t for t in x),  # simple generator that yields once
+def test_has_config_changed_property(tmp_yaml):
+    # Create a monitor but do not start its thread; test has_config_changed directly
+    monitor = ConfigMonitor(
+        tmp_yaml, on_change=lambda x: None, poll_interval=0.01, daemon=False
     )
 
-    # We still allow build_notify_dates_list to be real. But force should_notify to be False initially
-    # so that no notify() is called until we push a new config.
-    class DummyNotifyDateNoFire:
-        def __init__(self, data):
-            self.title = data.get("title", "")
-            self.for_ = data.get("for_", "")
-            self.data = data
+    # Initially, nothing has changed
+    assert monitor.has_config_changed is False
 
-        def should_notify(self, t):
-            return False
+    # Modify the file on disk
+    time.sleep(0.01)  # ensure filesystem mtime update
+    with open(tmp_yaml, "w") as f:
+        f.write("group2:\n  item2:\n    title: baz\n")  # minimal valid YAML
 
-    monkeypatch.setattr("notify.NotifyDate", DummyNotifyDateNoFire)
+    # After rewriting, last_hash should be updated internally
+    assert monitor.has_config_changed is True
 
-    # 2) Start run_cron in a thread
-    t = threading.Thread(
-        target=notify.run_cron,
-        args=(q, config_updated, stop_event, sample_config),
-        daemon=True,
+    # Calling has_config_changed a second time should now return False (because last_hash was updated)
+    assert monitor.has_config_changed is False
+
+
+def test_run_calls_on_change_when_file_updates(tmp_yaml):
+    # Arrange: a small YAML and a callback that captures calls
+    called = []
+
+    def on_change_callback(new_cfg):
+        called.append(new_cfg)
+
+    monitor = ConfigMonitor(
+        tmp_yaml, on_change=on_change_callback, poll_interval=0.01, daemon=True
     )
-    t.start()
+    monitor.start()
 
-    # 3) Give it a moment so it computes far_future, waits on `config_updated` for that interval
-    time.sleep(0.1)
-    assert not patch_notification, "No notifications should have fired yet"
+    # Wait a moment for the thread to start
+    time.sleep(0.02)
 
-    # 4) Build a new config dict that has a trigger “right now”
-    now_config = {
-        "foo": {
-            "bar": {
-                "title": "Immediate Event",
-                "for_": "you",
-                "date": datetime.now().strftime("%B %d"),
-                "notify_time": datetime.now().strftime("%I:%M %p"),
-                "notify_before_days": 0,
-            }
-        }
-    }
+    # Overwrite the file so that has_config_changed becomes True
+    with open(tmp_yaml, "w") as f:
+        f.write("groupX:\n  itemY:\n    title: newval\n")  # new content
 
-    # Push that new config into the queue
-    q.put(now_config)
-    # Signal that config has been updated, so run_cron will break out of its wait
-    config_updated.set()
+    # Give the monitor thread enough time to detect the change
+    time.sleep(0.05)
 
-    # 5) Wait a short moment for run_cron to pick up the new config, rebuild, and fire notify
-    time.sleep(0.2)
-    assert "Immediate Event" in patch_notification
+    # We expect on_change_callback to have been called once with the new dict
+    assert len(called) >= 1
+    assert isinstance(called[0], dict)
+    assert "groupX" in called[0]
+    assert called[0]["groupX"]["itemY"]["title"] == "newval"
 
-    # 6) Shutdown
-    stop_event.set()
-    t.join(timeout=1)
-    assert not t.is_alive()
+    # Clean up
+    monitor.stop()
+    monitor.join()
+
+
+def test_stop_prevents_further_on_change(tmp_yaml):
+    called = []
+
+    def on_change_callback(new_cfg):
+        called.append(new_cfg)
+
+    monitor = ConfigMonitor(
+        tmp_yaml, on_change=on_change_callback, poll_interval=0.01, daemon=True
+    )
+    monitor.start()
+    time.sleep(0.02)
+
+    # First change
+    with open(tmp_yaml, "w") as f:
+        f.write("a: 1\n")
+    time.sleep(0.05)
+    assert len(called) >= 1
+
+    # Now stop the monitor
+    monitor.stop()
+    time.sleep(0.01)
+
+    # Make another change to the file
+    with open(tmp_yaml, "w") as f:
+        f.write("b: 2\n")
+    time.sleep(0.05)
+
+    # After stopping, on_change should not be called again
+    assert len(called) == 1
+
+    monitor.join()

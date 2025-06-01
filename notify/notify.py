@@ -1,5 +1,4 @@
 import hashlib
-import os
 import time
 import signal
 import logging
@@ -11,7 +10,7 @@ from functools import cached_property
 from yaml import load, Loader  # type: ignore
 from scheduler import Scheduler
 from notify_dates import NotifyDate
-from vars import CONFIG_BASEPATH, TIMEZONE
+from vars import CONFIG_PATH, TIMEZONE
 
 logger = logging.getLogger(__name__)
 logging.basicConfig()
@@ -113,7 +112,7 @@ class CronRunner(Thread):
             for item in value.values():
                 time = item.get("notify_time")
                 if not time:
-                    print("No time found. Continuing.")
+                    logger.warning("No time found. Continuing.")
                     continue
                 temp = datetime.strptime(time, "%I:%M %p").time()
                 dt = now.replace(
@@ -189,9 +188,8 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    yml_path = os.path.join(CONFIG_BASEPATH, "notify.yml")
     cron = CronRunner()
-    monitor = ConfigMonitor(yml_path, cron.update_config)
+    monitor = ConfigMonitor(CONFIG_PATH, cron.update_config)
     cron.start()
     monitor.start()
 
@@ -199,9 +197,12 @@ def main():
         while not stop_event.is_set():
             time.sleep(1)
     except Exception:
-        stop_event.set()
-    monitor.join()
-    cron.join()
+        pass
+    finally:
+        monitor.stop()
+        cron.stop()
+        monitor.join()
+        cron.join()
 
 
 if __name__ == "__main__":

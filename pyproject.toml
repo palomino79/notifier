@@ -1,0 +1,30 @@
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "notify-service"
+version = "0.1.0"
+description = "A simple daemon that runs notify.py in a loop"
+authors = ["Vince McCrae"]
+license = "MIT"         # or whichever license you prefer
+readme = "README.md"    # if you have one
+keywords = ["notify", "daemon", "python"]
+
+[tool.poetry.dependencies]
+python = "^3.10"           # or whichever version range you target
+certifi = "==2025.4.26"
+charset-normalizer = "==3.4.2"
+idna = "==3.10"
+packaging = "==25.0"
+pyyaml = "==6.0.2"
+requests = "==2.32.3"
+urllib3 = "==2.4.0"
+
+[poetry.group.dev.dependencies]
+iniconfig = "==2.1.0"
+pluggy = "==1.6.0"
+pytest = "==8.3.5"
+
+[tool.poetry.scripts]
+notify = "notify:main"

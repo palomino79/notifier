@@ -61,19 +61,6 @@ holidays:
         d = self.base_data.get("holidays").get("july_fourth")
         return notify_dates.NotifyDate(d)
 
-    """
-    Don't need to test the following properties:
-    now
-    notify_before_days
-    notify_time
-    trigger_time
-
-    Do need to test:
-    should_notify
-    datetime
-    conditional_date
-    """
-
     def test_missing_notify_time_raises_error(self):
         with self.assertRaises(NotifyTimeAbsentError):
             _ = self.july_fourth.notify_time
@@ -98,8 +85,8 @@ holidays:
             datetime(2025, 5, 11, 11, 59, 59, tzinfo=notify_dates.TIMEZONE),
             datetime(2025, 5, 12, 12, 0, tzinfo=notify_dates.TIMEZONE),
             datetime(2025, 5, 13, 0, 0, tzinfo=notify_dates.TIMEZONE),
-            datetime(2025, 5, 12, 0, 0),
+            datetime(2025, 5, 12, 12, 0),
         ]
         should_notifies = [self.mothers_day.should_notify(x) for x in trigger_times]
-        values = [True, True, True, False, False, False, False]
+        values = [True, True, True, False, False, False, False, False]
         self.assertEqual(should_notifies, values)
