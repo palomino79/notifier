@@ -7,7 +7,7 @@ name = "notify-service"
 version = "0.1.0"
 description = "A simple daemon that runs notify.py in a loop"
 authors = ["Vince McCrae"]
-license = "GPL" 
+license = "GPL-3.0-or-later" 
 readme = "README.md"
 keywords = ["notify", "daemon", "python"]
 
