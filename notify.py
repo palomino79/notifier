@@ -1,28 +1,23 @@
-import requests
-from yaml import load, Loader  # type: ignore
-from typing import List
-import json
-import sys
 import hashlib
 import os
 import time
 import signal
-from cron import collect_notification_times, get_next_time
-from datetime import datetime
-from notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
+import logging
+from datetime import datetime, timedelta
+from typing import Callable
 from queue import Queue, Empty
 from threading import Thread, Event
-import logging
+from functools import cached_property
+from yaml import load, Loader  # type: ignore
+from scheduler import Scheduler
+from notify_dates import NotifyDate
+from vars import CONFIG_BASEPATH, TIMEZONE
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename="notify.log")
+logging.basicConfig()
 
 
-SERVICE = os.environ.get("SERVICE", "ntfy")
-TOPIC = os.environ.get("TOPIC", "birthday-alerts")
-
-
-def get_file_hash(file_path: str):
+def compute_file_hash(file_path: str):
     hash_sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(4096), b""):
@@ -30,88 +25,162 @@ def get_file_hash(file_path: str):
     return hash_sha256.hexdigest()
 
 
-def get_file_data(file_path: str):
+def load_config(file_path: str):
     with open(file_path, "r") as infile:
         res = load(infile, Loader)
-        json.dump(res, sys.stdout, indent=4)
+        return res
 
 
-def build_notify_dates_list(data: dict):
-    res = []
-    for _, value in data.items():
-        for _, item in value.items():
-            res.append(NotifyDate(item))
-    return res
+class ConfigMonitor(Thread):
+    def __init__(
+        self,
+        file_path: str,
+        on_change: Callable,
+        poll_interval: float = 2.0,
+        daemon=True,
+    ):
+        self._file_path = file_path
+        self._on_change = on_change
+        self._poll_interval = poll_interval
+        self._stop = Event()
+        self._last_hash = compute_file_hash(file_path)
+        super().__init__(daemon=daemon)
+
+    @cached_property
+    def last_hash(self):
+        """
+        While this is not thread safe, it's never going to be altered
+        from a different thread and provides adquate convenience to warrant
+        the small amount of risk around using cached_property.
+        """
+        return compute_file_hash(self._file_path)
+
+    @property
+    def config_data(self):
+        return load_config(self._file_path)
+
+    @property
+    def has_config_changed(self):
+        has_change = compute_file_hash(self._file_path) != self.last_hash
+        if has_change:
+            del self.last_hash
+        return has_change
+
+    def _loop(self):
+        while not self._stop.is_set():
+            if self.has_config_changed:
+                self._on_change(self.config_data)
+            if self._stop.wait(self._poll_interval):
+                return
+
+    def run(self):
+        self._loop()
+
+    def stop(self):
+        self._stop.set()
+        # we call self.join from the main thread
 
 
-def notify(nd: NotifyDate):
-    title = nd.data.get("title")
-    for_ = nd.data.get("for")
-    date = nd.data.get("date")
-    message = f"Upcoming reminder: {title}. For: {for_}. When: {date}"
-    try:
-        requests.post(f"http://{SERVICE}/{TOPIC}", data=message)
-    except requests.HTTPError as e:
-        print(e)
+class CronRunner(Thread):
+    def __init__(self, block_interval: int = 2, daemon=True):
+        self._stop = Event()
+        self._config_updated = Event()
+        self._queue: Queue = Queue()
+        self._block_interval = block_interval
+        self._current_config = None
+        self._scheduler: Scheduler | None = None
+        self._fire_time_delta = 0
+        super().__init__(daemon=daemon)
 
+    @property
+    def fire_time_generator(self):
+        while True:
+            for t in self.fire_times:
+                now = datetime.now(tz=TIMEZONE)
+                if t > now:
+                    yield t
+            self._fire_time_delta += 1
+            if self._scheduler:
+                self._scheduler.fire_times = self.fire_times
 
-def check_firing_times(notify_dates: List[NotifyDate], trigger_times):
-    for nd in notify_dates:
-        for t in trigger_times:
-            try:
-                if nd.should_notify(t):
-                    notify(nd)
-                    break
-            except NotifyTimeAbsentError:
-                logger.error(f"No notify_time set for notify_date {nd.title}")
-            except DateAbsentError:
-                logger.error(f"No date set for notify_date {nd.title}")
-            except ValueError as e:
-                logger.error(e, exc_info=True)
+    @property
+    def fire_times(self):
+        now = datetime.now(tz=TIMEZONE)
+        times = []
+        if not self._current_config:
+            return []
+        for value in self._current_config.values():
+            for item in value.values():
+                time = item.get("notify_time")
+                if not time:
+                    print("No time found. Continuing.")
+                    continue
+                temp = datetime.strptime(time, "%I:%M %p").time()
+                dt = now.replace(
+                    hour=temp.hour, minute=temp.minute, second=0, microsecond=0
+                )
+                times.append(dt + timedelta(days=self._fire_time_delta))
+        times = list(set(times))
+        return sorted(times)
 
+    @property
+    def notify_dates(self):
+        if not self._current_config:
+            return []
+        return [
+            NotifyDate(x)
+            for item in self._current_config.values()
+            for x in item.values()
+        ]
 
-def monitor_config(q: Queue, config_updated: Event, stop_event: Event):
-    yml_path = "notify.yml"
-    last_hash = get_file_hash(yml_path)
-    file_data = get_file_data(yml_path)
-    while not stop_event.is_set():
-        this_hash = get_file_hash(yml_path)
-        if this_hash != last_hash:
-            file_data = get_file_data(yml_path)
-            q.put(file_data)
-            config_updated.set()
-            last_hash = this_hash
-        stop_event.wait(timeout=3)
-
-
-def run_cron(q: Queue, config_updated: Event, stop_event: Event, initial_config: dict):
-    file_data = initial_config
-    trigger_times = collect_notification_times(file_data)
-    time_generator = get_next_time(trigger_times)
-    notify_dates = build_notify_dates_list(file_data)
-    while not stop_event.is_set():
+    def _run_once(self):
         try:
-            new_data = q.get(timeout=3)
+            if self._config_updated.is_set():
+                new_config = self._queue.get_nowait()
+                self._config_updated.clear()
         except Empty:
             pass
         else:
-            file_data = new_data
-            trigger_times = collect_notification_times(file_data)
-            time_generator = get_next_time(trigger_times)
-            notify_dates = build_notify_dates_list(file_data)
-        if notify_dates and time_generator:
-            next_time = next(time_generator)
-            until_next_time = max((next_time - datetime.now()).total_seconds(), 0)
-            timed_out = config_updated.wait(until_next_time) or stop_event.is_set()
-            if not timed_out:
-                config_updated.clear()
-            check_firing_times(notify_dates, trigger_times)
+            if new_config != self._current_config:
+                self._current_config = new_config
+                self._build_scheduler()
+        if self._scheduler:
+            # .wait() blocks until we need to send again
+            self._scheduler.wait()
+            self._scheduler.send()
+        else:
+            if self._stop.wait(self._block_interval):
+                return
+
+    def _loop(self):
+        while not self._stop.is_set():
+            self._run_once()
+
+    def _build_scheduler(self):
+        if self._current_config is None:
+            raise ValueError
+        self._scheduler = Scheduler(
+            notify_dates=self.notify_dates,
+            fire_times=self.fire_times,
+            time_generator=self.fire_time_generator,
+            stop_event=self._stop,
+            config_updated_event=self._config_updated,
+        )
+
+    def stop(self):
+        self._stop.set()
+        self._config_updated.set()
+
+    def update_config(self, new_config: dict):
+        self._queue.put(new_config)
+        self._config_updated.set()
+
+    def run(self):
+        self._loop()
 
 
 def main():
-    q = Queue()  # type: ignore
     stop_event = Event()
-    config_updated = Event()
 
     def signal_handler(signum, frame):
         print(f"\n[main] Received signal {signum}. Shutting down...")
@@ -120,20 +189,19 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    yml_path = "notify.yml"
-    initial_config = get_file_data(yml_path)
-    mc = Thread(target=monitor_config, args=(q, config_updated, stop_event))
-    rc = Thread(target=run_cron, args=(q, config_updated, stop_event, initial_config))
-    mc.start()
-    rc.start()
+    yml_path = os.path.join(CONFIG_BASEPATH, "notify.yml")
+    cron = CronRunner()
+    monitor = ConfigMonitor(yml_path, cron.update_config)
+    cron.start()
+    monitor.start()
 
     try:
         while not stop_event.is_set():
             time.sleep(1)
     except Exception:
         stop_event.set()
-    mc.join()
-    rc.join()
+    monitor.join()
+    cron.join()
 
 
 if __name__ == "__main__":

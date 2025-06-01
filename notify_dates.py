@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Union, List
 from functools import cached_property
 import logging
-from cron import TIMEZONE
+from vars import TIMEZONE
 
 logger = logging.getLogger("notify")
 logging.basicConfig()
@@ -66,11 +66,15 @@ class NotifyDate:
     data: dict
 
     @cached_property
+    def for_(self):
+        return self.data.get("for")
+
+    @cached_property
     def title(self):
         return self.data.get("title", "No title.")
 
     @cached_property
-    def date(self) -> datetime:
+    def date(self) -> datetime | dict:
         date = self.data.get("date")
         if not date:
             raise DateAbsentError
@@ -119,14 +123,16 @@ class NotifyDate:
             )
         elif isinstance(self.date, dict):
             return self.notify_time.replace(
-                year=self.conditional_date.year,
-                month=self.conditional_date.month,
-                day=self.conditional_date.day,
+                year=self.conditional_date.year,  # type: ignore
+                month=self.conditional_date.month,  # type: ignore
+                day=self.conditional_date.day,  # type: ignore
             )
         raise ValueError
 
     @cached_property
     def conditional_date(self) -> datetime:  # type: ignore
+        if not isinstance(self.date, dict):
+            raise ValueError("Cannot call conditional date without date dictionary.")
         month = self.date["month"]  # type: ignore
         weekday = self.date["weekday"]  # type: ignore
         day_n = self.date["day_n"]  # type: ignore
