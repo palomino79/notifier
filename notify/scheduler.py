@@ -5,10 +5,22 @@ from threading import Event
 import logging
 import requests
 from .notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
-from .vars import NOTIFICATION_URL
+from .vars import NOTIFICATION_URL, SUPPRESS_SSL_WARNINGS
 
 logger = logging.getLogger(__file__)
 logging.basicConfig()
+
+if SUPPRESS_SSL_WARNINGS:
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def post_message(message: str):
+    try:
+        requests.post(NOTIFICATION_URL, data=message, verify=False)
+    except requests.HTTPError as e:
+        print(e)
 
 
 def notify(nd: NotifyDate):
@@ -17,10 +29,7 @@ def notify(nd: NotifyDate):
     date: datetime = nd.date if not isinstance(nd.date, dict) else nd.conditional_date
     ctime = date.ctime()
     message = f"Upcoming reminder: {title}. For: {for_}. When: {ctime}"
-    try:
-        requests.post(NOTIFICATION_URL, data=message, verify=False)
-    except requests.HTTPError as e:
-        print(e)
+    post_message(message)
 
 
 @dataclass

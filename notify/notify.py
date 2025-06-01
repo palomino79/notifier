@@ -79,7 +79,10 @@ class ConfigMonitor(Thread):
 
 
 class CronRunner(Thread):
-    def __init__(self, block_interval: int = 2, daemon=True):
+    def __init__(
+        self, test_on_start: bool = False, block_interval: int = 2, daemon=True
+    ):
+        self._test_on_start = test_on_start
         self._stop = Event()
         self._config_updated = Event()
         self._queue: Queue = Queue()
@@ -149,6 +152,10 @@ class CronRunner(Thread):
                 return
 
     def _loop(self):
+        if self._test_on_start:
+            from .scheduler import post_message
+
+            post_message("Test message from notifier at " + datetime.now().ctime())
         while not self._stop.is_set():
             self._run_once()
 

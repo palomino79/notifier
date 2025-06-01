@@ -11,3 +11,4 @@ services:
       SCHEDULE_PATH: "/schedule.yml"
       PUSH_SERVICE_URL: "https://ntfy.dont.panic"
       TOPIC: "birthday-alerts"
+      TEST_ON_START: True

@@ -3,7 +3,7 @@ import signal
 from threading import Event
 from time import sleep
 from notify.notify import CronRunner, ConfigMonitor
-from notify.vars import SCHEDULE_PATH, TOPIC, PUSH_SERVICE_URL
+from notify.vars import SCHEDULE_PATH, TOPIC, PUSH_SERVICE_URL, TEST_ON_START
 
 
 def check_environment():
@@ -29,7 +29,7 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    cron = CronRunner()
+    cron = CronRunner(test_on_start=TEST_ON_START)
     monitor = ConfigMonitor(SCHEDULE_PATH, cron.update_config)  # type: ignore
     cron.start()
     monitor.start()
