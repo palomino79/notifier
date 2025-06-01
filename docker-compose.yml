@@ -1,0 +1,8 @@
+services:
+  notify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: notify-service:local
+    volumes:
+      - ./:/app:ro

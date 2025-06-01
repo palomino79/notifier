@@ -43,7 +43,7 @@ class Scheduler:
             logger.error(f"No notify_time set for notify_date {nd.title}")
         except DateAbsentError:
             logger.error(f"No date set for notify_date {nd.title}")
-        except TypeError as e:
+        except (ValueError, TypeError) as e:
             logger.error(e, exc_info=True)
         return False
 
