@@ -4,8 +4,8 @@ from typing import List, Generator
 from threading import Event
 import logging
 import requests
-from notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
-from vars import SERVICE, TOPIC
+from .notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
+from .vars import SERVICE, TOPIC
 
 logger = logging.getLogger(__file__)
 logging.basicConfig()
@@ -43,7 +43,7 @@ class Scheduler:
             logger.error(f"No notify_time set for notify_date {nd.title}")
         except DateAbsentError:
             logger.error(f"No date set for notify_date {nd.title}")
-        except ValueError as e:
+        except TypeError as e:
             logger.error(e, exc_info=True)
         return False
 

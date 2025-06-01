@@ -1,8 +1,8 @@
 from datetime import datetime
 import yaml  # type: ignore
 import unittest
-import notify_dates
-from notify_dates import NotifyTimeAbsentError
+from notify import notify_dates
+from notify.notify_dates import NotifyTimeAbsentError
 from functools import cached_property
 
 

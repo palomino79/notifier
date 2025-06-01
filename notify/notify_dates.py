@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Union, List
 from functools import cached_property
 import logging
-from vars import TIMEZONE
+from .vars import TIMEZONE
 
 logger = logging.getLogger("notify")
 logging.basicConfig()
@@ -127,19 +127,19 @@ class NotifyDate:
                 month=self.conditional_date.month,  # type: ignore
                 day=self.conditional_date.day,  # type: ignore
             )
-        raise ValueError
+        raise TypeError(f"Expected string or dict for self.date. Got {type(self.date)}")
 
     @cached_property
     def conditional_date(self) -> datetime:  # type: ignore
         if not isinstance(self.date, dict):
-            raise ValueError("Cannot call conditional date without date dictionary.")
+            raise TypeError("Cannot call conditional date without date dictionary.")
         month = self.date["month"]  # type: ignore
         weekday = self.date["weekday"]  # type: ignore
         day_n = self.date["day_n"]  # type: ignore
 
         weekdays = collect_weekday(weekday, month, self.now.year)
         if not isinstance(day_n, int):
-            if not isinstance(day_n, str) and day_n != "last":
+            if isinstance(day_n, str) and day_n != "last":
                 raise ValueError(f"Expected `last`, got {day_n}")
             return weekdays[-1]
         return weekdays[day_n - 1]

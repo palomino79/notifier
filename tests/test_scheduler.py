@@ -2,8 +2,7 @@ import pytest
 import threading
 from datetime import datetime, timedelta
 from threading import Event
-
-import scheduler
+from notify import scheduler
 
 
 class FakeNotifyDate:
@@ -43,7 +42,7 @@ def patch_notify(monkeypatch):
     def fake_notify(nd_instance):
         called.append(nd_instance.title)
 
-    monkeypatch.setattr("scheduler.notify", fake_notify)
+    monkeypatch.setattr("notify.scheduler.notify", fake_notify)
     return called
 
 

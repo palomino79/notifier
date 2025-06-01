@@ -1,6 +1,4 @@
 import hashlib
-import time
-import signal
 import logging
 from datetime import datetime, timedelta
 from typing import Callable
@@ -8,9 +6,9 @@ from queue import Queue, Empty
 from threading import Thread, Event
 from functools import cached_property
 from yaml import load, Loader  # type: ignore
-from scheduler import Scheduler
-from notify_dates import NotifyDate
-from vars import CONFIG_PATH, TIMEZONE
+from .scheduler import Scheduler
+from .notify_dates import NotifyDate
+from .vars import TIMEZONE
 
 logger = logging.getLogger(__name__)
 logging.basicConfig()
@@ -157,7 +155,7 @@ class CronRunner(Thread):
 
     def _build_scheduler(self):
         if self._current_config is None:
-            raise ValueError
+            raise TypeError
         self._scheduler = Scheduler(
             notify_dates=self.notify_dates,
             fire_times=self.fire_times,
@@ -176,34 +174,3 @@ class CronRunner(Thread):
 
     def run(self):
         self._loop()
-
-
-def main():
-    stop_event = Event()
-
-    def signal_handler(signum, frame):
-        print(f"\n[main] Received signal {signum}. Shutting down...")
-        stop_event.set()
-
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
-    cron = CronRunner()
-    monitor = ConfigMonitor(CONFIG_PATH, cron.update_config)
-    cron.start()
-    monitor.start()
-
-    try:
-        while not stop_event.is_set():
-            time.sleep(1)
-    except Exception:
-        pass
-    finally:
-        monitor.stop()
-        cron.stop()
-        monitor.join()
-        cron.join()
-
-
-if __name__ == "__main__":
-    main()
