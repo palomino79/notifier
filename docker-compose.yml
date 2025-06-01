@@ -9,5 +9,5 @@ services:
       - ./test_schedule/schedule.yml:/schedule.yml
     environment:
       SCHEDULE_PATH: "/schedule.yml"
-      SERVICE: "ntfy"
+      PUSH_SERVICE_URL: "https://ntfy.dont.panic"
       TOPIC: "birthday-alerts"

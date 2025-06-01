@@ -3,15 +3,15 @@ import signal
 from threading import Event
 from time import sleep
 from notify.notify import CronRunner, ConfigMonitor
-from notify.vars import SCHEDULE_PATH, TOPIC, SERVICE
+from notify.vars import SCHEDULE_PATH, TOPIC, PUSH_SERVICE_URL
 
 
 def check_environment():
     must_be_set = "{} environment variable must be set."
     if not SCHEDULE_PATH:
         raise EnvironmentError(must_be_set.format("SCHEDULE_PATH"))
-    if not SERVICE:
-        raise EnvironmentError(must_be_set.format("SERVICE"))
+    if not PUSH_SERVICE_URL:
+        raise EnvironmentError(must_be_set.format("PUSH_SERVICE_URL"))
     if not TOPIC:
         raise EnvironmentError(must_be_set.format("TOPIC"))
     if not os.path.exists(SCHEDULE_PATH):

@@ -5,7 +5,7 @@ from threading import Event
 import logging
 import requests
 from .notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
-from .vars import SERVICE, TOPIC
+from .vars import NOTIFICATION_URL
 
 logger = logging.getLogger(__file__)
 logging.basicConfig()
@@ -18,7 +18,7 @@ def notify(nd: NotifyDate):
     ctime = date.ctime()
     message = f"Upcoming reminder: {title}. For: {for_}. When: {ctime}"
     try:
-        requests.post(f"http://{SERVICE}/{TOPIC}", data=message)
+        requests.post(NOTIFICATION_URL, data=message, verify=False)
     except requests.HTTPError as e:
         print(e)
 
