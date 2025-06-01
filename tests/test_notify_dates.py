@@ -24,11 +24,10 @@ birthdays:
     josh:
         title: Josh's birthday
         for: Josh Smith
-        date: September 22
+        date: December 5
         notify_before_days: 2
         notify_time: 12:00 PM
         repeat: true
-
 holidays:
     mothers_day:
         title: mother's day

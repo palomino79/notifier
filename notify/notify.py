@@ -135,12 +135,11 @@ class CronRunner(Thread):
             if self._config_updated.is_set():
                 new_config = self._queue.get_nowait()
                 self._config_updated.clear()
+                if new_config and new_config != self._current_config:
+                    self._current_config = new_config
+                    self._build_scheduler()
         except Empty:
-            new_config = None
-        else:
-            if new_config and new_config != self._current_config:
-                self._current_config = new_config
-                self._build_scheduler()
+            pass
         if self._scheduler:
             # .wait() blocks until we need to send again
             self._scheduler.wait()
