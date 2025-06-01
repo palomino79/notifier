@@ -16,5 +16,6 @@ COPY pyproject.toml poetry.lock* /app/
 RUN poetry config virtualenvs.create false && \
     poetry install --no-interaction --no-ansi --no-dev
 
-COPY notify.py /app/
-CMD ["python", "notify.py"]
+COPY app.py /app/
+COPY notify/ /app/notify/
+CMD ["python", "app.py"]
