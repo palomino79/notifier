@@ -136,9 +136,9 @@ class CronRunner(Thread):
                 new_config = self._queue.get_nowait()
                 self._config_updated.clear()
         except Empty:
-            pass
+            new_config = None
         else:
-            if new_config != self._current_config:
+            if new_config and new_config != self._current_config:
                 self._current_config = new_config
                 self._build_scheduler()
         if self._scheduler:

@@ -6,3 +6,8 @@ services:
     image: notify-service:local
     volumes:
       - ./:/app:ro
+      - ./test_schedule/schedule.yml:/schedule.yml
+    environment:
+      SCHEDULE_PATH: "/schedule.yml"
+      SERVICE: "ntfy"
+      TOPIC: "birthday-alerts"
