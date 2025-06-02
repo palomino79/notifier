@@ -41,6 +41,11 @@ holidays:
     july_fourth:
         title: Fourth of July
         date: July 4
+    new_years:
+        title: New Years
+        date: January 1
+        notify_time: 12:00 PM
+        notify_before_days: 2
         """
 
         self.base_data = yaml.load(base_yml, yaml.Loader)
@@ -58,6 +63,11 @@ holidays:
     @cached_property
     def july_fourth(self):
         d = self.base_data.get("holidays").get("july_fourth")
+        return notify_dates.NotifyDate(d)
+
+    @cached_property
+    def new_years(self):
+        d = self.base_data.get("holidays").get("new_years")
         return notify_dates.NotifyDate(d)
 
     def test_missing_notify_time_raises_error(self):
@@ -88,4 +98,15 @@ holidays:
         ]
         should_notifies = [self.mothers_day.should_notify(x) for x in trigger_times]
         values = [True, True, True, False, False, False, False, False]
+        self.assertEqual(should_notifies, values)
+
+        trigger_times = [
+            datetime(2025, 12, 28, 12, 0, tzinfo=notify_dates.TIMEZONE),
+            datetime(2025, 12, 31, 12, 0, tzinfo=notify_dates.TIMEZONE),
+            datetime(2025, 12, 31, 13, 0, tzinfo=notify_dates.TIMEZONE),
+            datetime(2026, 1, 2, 0, 0, tzinfo=notify_dates.TIMEZONE),
+        ]
+
+        should_notifies = [self.new_years.should_notify(x) for x in trigger_times]
+        values = [False, True, False, False]
         self.assertEqual(should_notifies, values)

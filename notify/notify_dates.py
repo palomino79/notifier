@@ -78,7 +78,13 @@ class NotifyDate:
         date = self.data.get("date")
         if not date:
             raise DateAbsentError
-        return datetime.strptime(date, "%B %d") if date is str else date
+        if isinstance(date, str):
+            this = f"{date} {self.now.year}"
+            return datetime.strptime(this, "%B %d %Y")
+        elif isinstance(date, dict):
+            return date
+        else:
+            raise TypeError("Unexpected date format found: " + str(type(date)))
 
     @property
     def now(self):
@@ -110,14 +116,22 @@ class NotifyDate:
                 delta: timedelta = self.datetime - trigger_time
             except TypeError:
                 return False
-            if (delta.days >= 0) and (delta.days <= self.notify_before_days):
+            if delta.days < 0:
+                """
+                This deals with the scenario where you have, for example
+                an alert for January 1st, YEAR+1 and you want it to fire
+                on, say, December 31st, YEAR.
+                """
+                dt = self.datetime.replace(year=self.datetime.year + 1)
+                delta = dt - trigger_time
+            if (delta.days > 0) and (delta.days <= self.notify_before_days):
                 seconds = delta.total_seconds()
                 return not (seconds % (60 * 60 * 24))
         return False
 
     @cached_property
     def datetime(self) -> datetime:
-        if isinstance(self.date, str):
+        if isinstance(self.date, datetime):
             return self.notify_time.replace(
                 year=self.now.year, month=self.date.month, day=self.date.day
             )
