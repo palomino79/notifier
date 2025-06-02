@@ -2,7 +2,7 @@ import os
 import signal
 from threading import Event
 from time import sleep
-from notify.notify import CronRunner, ConfigMonitor
+from notify.notify import CronRunner, ScheduleMonitor
 from notify.vars import SCHEDULE_PATH, TOPIC, PUSH_SERVICE_URL, TEST_ON_START
 
 
@@ -30,7 +30,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     cron = CronRunner(test_on_start=TEST_ON_START)
-    monitor = ConfigMonitor(SCHEDULE_PATH, cron.update_config)  # type: ignore
+    monitor = ScheduleMonitor(SCHEDULE_PATH, cron.update_config)  # type: ignore
     cron.start()
     monitor.start()
 

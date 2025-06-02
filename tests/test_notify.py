@@ -8,7 +8,7 @@ from threading import Event
 import yaml
 
 from notify import notify
-from notify.notify import ConfigMonitor, compute_file_hash, load_config
+from notify.notify import ScheduleMonitor, compute_file_hash, load_schedule
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ def tmp_yaml(tmp_path):
     """
     Create a temporary YAML file with some initial content and return its path.
     """
-    file_path = tmp_path / "config.yml"
+    file_path = tmp_path / "schedule.yml"
     initial_data = {
         "group1": {
             "item1": {
@@ -34,35 +34,35 @@ def tmp_yaml(tmp_path):
     return str(file_path)
 
 
-def test_compute_file_hash_and_load_config(tmp_yaml):
+def test_compute_file_hash_and_load_schedule(tmp_yaml):
     # compute_file_hash should match the hash of the actual file
     h1 = compute_file_hash(tmp_yaml)
     # writing the same data again should give the same hash
     h2 = compute_file_hash(tmp_yaml)
     assert h1 == h2
 
-    # load_config should return a dict with our initial content
-    cfg = load_config(tmp_yaml)
+    # load_schedule should return a dict with our initial content
+    cfg = load_schedule(tmp_yaml)
     assert isinstance(cfg, dict)
     assert "group1" in cfg
     assert "item1" in cfg["group1"]
     assert cfg["group1"]["item1"]["title"] == "foo"
 
 
-def test_has_config_changed_property(tmp_yaml):
-    monitor = ConfigMonitor(
+def test_has_schedule_changed_property(tmp_yaml):
+    monitor = ScheduleMonitor(
         tmp_yaml, on_change=lambda x: None, poll_interval=0.01, daemon=False
     )
 
-    assert monitor.has_config_changed is False
+    assert monitor.has_schedule_changed is False
 
     time.sleep(0.01)  # ensure filesystem mtime update
     with open(tmp_yaml, "w") as f:
         f.write("group2:\n  item2:\n    title: baz\n")  # minimal valid YAML
 
-    assert monitor.has_config_changed is True
+    assert monitor.has_schedule_changed is True
 
-    assert monitor.has_config_changed is False
+    assert monitor.has_schedule_changed is False
 
 
 def test_run_calls_on_change_when_file_updates(tmp_yaml):
@@ -71,7 +71,7 @@ def test_run_calls_on_change_when_file_updates(tmp_yaml):
     def on_change_callback(new_cfg):
         called.append(new_cfg)
 
-    monitor = ConfigMonitor(
+    monitor = ScheduleMonitor(
         tmp_yaml, on_change=on_change_callback, poll_interval=0.01, daemon=True
     )
     monitor.start()
@@ -98,7 +98,7 @@ def test_stop_prevents_further_on_change(tmp_yaml):
     def on_change_callback(new_cfg):
         called.append(new_cfg)
 
-    monitor = ConfigMonitor(
+    monitor = ScheduleMonitor(
         tmp_yaml, on_change=on_change_callback, poll_interval=0.01, daemon=True
     )
     monitor.start()

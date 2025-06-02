@@ -2,13 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Generator
 from threading import Event
-import logging
 import requests
 from .notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
 from .vars import NOTIFICATION_URL, SUPPRESS_SSL_WARNINGS
+from .log_setup import logger
 
-logger = logging.getLogger(__file__)
-logging.basicConfig()
 
 if SUPPRESS_SSL_WARNINGS:
     import urllib3
@@ -29,6 +27,7 @@ def notify(nd: NotifyDate):
     date: datetime = nd.date if not isinstance(nd.date, dict) else nd.conditional_date
     ctime = date.ctime()
     message = f"Upcoming reminder: {title}. For: {for_}. When: {ctime}"
+    logger.info(f'Posting message: "{message}"')
     post_message(message)
 
 
@@ -38,7 +37,7 @@ class Scheduler:
     fire_times: List[datetime]
     time_generator: Generator
     stop_event: Event
-    config_updated_event: Event
+    schedule_updated_event: Event
 
     @property
     def _notify_dates_and_fire_times(self):
@@ -70,7 +69,12 @@ class Scheduler:
         """
         next_time = next(self.time_generator)  # type: ignore
         until_next_time = max((next_time - datetime.now()).total_seconds(), 0)
+        logger.info(
+            f"New sleep target: {next_time.ctime()}. "
+            f"Sleeping for {until_next_time} seconds."
+        )
         wait_interrupted = (
-            self.config_updated_event.wait(until_next_time) or self.stop_event.is_set()
+            self.schedule_updated_event.wait(until_next_time)
+            or self.stop_event.is_set()
         )
         return wait_interrupted

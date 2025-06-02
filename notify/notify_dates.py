@@ -2,11 +2,8 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 from typing import Union, List
 from functools import cached_property
-import logging
 from .vars import TIMEZONE
-
-logger = logging.getLogger("notify")
-logging.basicConfig()
+from .log_setup import logger
 
 
 class NotifyTimeAbsentError(Exception): ...
