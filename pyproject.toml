@@ -5,10 +5,11 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry]
 name = "notify-service"
 version = "0.1.0"
-description = "A simple daemon that runs notify.py in a loop"
+description = "A simple daemon that runs a scheduler in a loop"
 authors = ["Vince McCrae"]
 license = "GPL-3.0-or-later" 
 readme = "README.md"
+package-mode = false
 keywords = ["notify", "daemon", "python"]
 
 [tool.poetry.dependencies]
