@@ -5,6 +5,6 @@ services:
       - ./schedule/schedule.yml:/schedule.yml
     environment:
       SCHEDULE_PATH: "/schedule.yml"
-      PUSH_SERVICE_URL: "http://ntfy"
-      TOPIC: "generic-alerts"
-      TEST_ON_START: True
+      PUSH_SERVICE_URL: "http://your.service.com"
+      TOPIC: "your-alerts-topic"
+      # TEST_ON_START: True # Remove this after you're confident your configuration is correct
