@@ -1,14 +1,10 @@
 services:
   notify:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: notify-service:local
+    image: ghcr.io/palomino79/notifier:latest
     volumes:
-      - ./:/app:ro
-      - ./test_schedule/schedule.yml:/schedule.yml
+      - ./schedule/schedule.yml:/schedule.yml
     environment:
       SCHEDULE_PATH: "/schedule.yml"
-      PUSH_SERVICE_URL: "https://ntfy.dont.panic"
-      TOPIC: "birthday-alerts"
+      PUSH_SERVICE_URL: "http://ntfy"
+      TOPIC: "generic-alerts"
       TEST_ON_START: True
