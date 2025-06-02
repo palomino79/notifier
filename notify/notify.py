@@ -39,7 +39,7 @@ class ConfigMonitor(Thread):
         self._file_path = file_path
         self._on_change = on_change
         self._poll_interval = poll_interval
-        self._stop = Event()
+        self._stop_event = Event()
         self._last_hash = compute_file_hash(file_path)
         super().__init__(daemon=daemon)
 
@@ -64,17 +64,17 @@ class ConfigMonitor(Thread):
         return has_change
 
     def _loop(self):
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             if self.has_config_changed:
                 self._on_change(self.config_data)
-            if self._stop.wait(self._poll_interval):
+            if self._stop_event.wait(self._poll_interval):
                 return
 
     def run(self):
         self._loop()
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
         # we call self.join from the main thread
 
 
@@ -83,7 +83,7 @@ class CronRunner(Thread):
         self, test_on_start: bool = False, block_interval: int = 2, daemon=True
     ):
         self._test_on_start = test_on_start
-        self._stop = Event()
+        self._stop_event = Event()
         self._config_updated = Event()
         self._queue: Queue = Queue()
         self._block_interval = block_interval
@@ -148,7 +148,7 @@ class CronRunner(Thread):
             self._scheduler.wait()
             self._scheduler.send()
         else:
-            if self._stop.wait(self._block_interval):
+            if self._stop_event.wait(self._block_interval):
                 return
 
     def _loop(self):
@@ -156,7 +156,7 @@ class CronRunner(Thread):
             from .scheduler import post_message
 
             post_message("Test message from notifier at " + datetime.now().ctime())
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             self._run_once()
 
     def _build_scheduler(self):
@@ -166,12 +166,12 @@ class CronRunner(Thread):
             notify_dates=self.notify_dates,
             fire_times=self.fire_times,
             time_generator=self.fire_time_generator,
-            stop_event=self._stop,
+            stop_event=self._stop_event,
             config_updated_event=self._config_updated,
         )
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
         self._config_updated.set()
 
     def update_config(self, new_config: dict):
