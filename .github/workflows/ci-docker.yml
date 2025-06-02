@@ -25,7 +25,9 @@ jobs:
           poetry install --no-interaction --no-ansi --no-root
 
       - name: Run pytest
-        run: poetry run pytest
+        run: |
+          export PYTHONPATH=$PWD
+          poetry run pytest
 
 
   build-and-push:
