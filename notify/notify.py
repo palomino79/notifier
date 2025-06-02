@@ -9,9 +9,7 @@ from yaml import load, Loader  # type: ignore
 from .scheduler import Scheduler
 from .notify_dates import NotifyDate
 from .vars import TIMEZONE
-
-logger = logging.getLogger(__name__)
-logging.basicConfig()
+from .log_setup import logger
 
 
 def compute_file_hash(file_path: str):
@@ -22,13 +20,13 @@ def compute_file_hash(file_path: str):
     return hash_sha256.hexdigest()
 
 
-def load_config(file_path: str):
+def load_schedule(file_path: str):
     with open(file_path, "r") as infile:
         res = load(infile, Loader)
         return res
 
 
-class ConfigMonitor(Thread):
+class ScheduleMonitor(Thread):
     def __init__(
         self,
         file_path: str,
@@ -43,6 +41,10 @@ class ConfigMonitor(Thread):
         self._last_hash = compute_file_hash(file_path)
         super().__init__(daemon=daemon)
 
+        logger.info(
+            f"ScheduleMonitor started with polling interval of {poll_interval} seconds."
+        )
+
     @cached_property
     def last_hash(self):
         """
@@ -53,21 +55,23 @@ class ConfigMonitor(Thread):
         return compute_file_hash(self._file_path)
 
     @property
-    def config_data(self):
-        return load_config(self._file_path)
+    def schedule_data(self):
+        return load_schedule(self._file_path)
 
     @property
-    def has_config_changed(self):
+    def has_schedule_changed(self):
         has_change = compute_file_hash(self._file_path) != self.last_hash
         if has_change:
+            logger.info("Detected schedule change. Updating...")
             del self.last_hash
         return has_change
 
     def _loop(self):
         while not self._stop_event.is_set():
-            if self.has_config_changed:
-                self._on_change(self.config_data)
+            if self.has_schedule_changed:
+                self._on_change(self.schedule_data)
             if self._stop_event.wait(self._poll_interval):
+                logger.info("Stop signal received for ScheduleMonitor. Stopping.")
                 return
 
     def run(self):
@@ -84,13 +88,17 @@ class CronRunner(Thread):
     ):
         self._test_on_start = test_on_start
         self._stop_event = Event()
-        self._config_updated = Event()
+        self._schedule_updated = Event()
         self._queue: Queue = Queue()
         self._block_interval = block_interval
-        self._current_config = None
+        self._current_schedule = None
         self._scheduler: Scheduler | None = None
         self._fire_time_delta = 0
         super().__init__(daemon=daemon)
+
+        logger.info(
+            f"CronRunner started with block interval of {block_interval} seconds."
+        )
 
     @property
     def fire_time_generator(self):
@@ -107,9 +115,9 @@ class CronRunner(Thread):
     def fire_times(self):
         now = datetime.now(tz=TIMEZONE)
         times = []
-        if not self._current_config:
+        if not self._current_schedule:
             return []
-        for value in self._current_config.values():
+        for value in self._current_schedule.values():
             for item in value.values():
                 time = item.get("notify_time")
                 if not time:
@@ -125,28 +133,30 @@ class CronRunner(Thread):
 
     @property
     def notify_dates(self):
-        if not self._current_config:
+        if not self._current_schedule:
             return []
         return [
             NotifyDate(x)
-            for item in self._current_config.values()
+            for item in self._current_schedule.values()
             for x in item.values()
         ]
 
     def _run_once(self):
         try:
-            if self._config_updated.is_set():
-                new_config = self._queue.get_nowait()
-                self._config_updated.clear()
-                if new_config and new_config != self._current_config:
-                    self._current_config = new_config
+            if self._schedule_updated.is_set():
+                new_schedule = self._queue.get_nowait()
+                self._schedule_updated.clear()
+                if new_schedule and new_schedule != self._current_schedule:
+                    self._current_schedule = new_schedule
+                    logger.info("Schedule has been updated.")
                     self._build_scheduler()
         except Empty:
             pass
         if self._scheduler:
-            # .wait() blocks until we need to send again
-            self._scheduler.wait()
-            self._scheduler.send()
+            if self._scheduler.wait():
+                logger.info("Scheduled wait operation was interrupted. Bypassing send.")
+            else:
+                self._scheduler.send()
         else:
             if self._stop_event.wait(self._block_interval):
                 return
@@ -160,23 +170,23 @@ class CronRunner(Thread):
             self._run_once()
 
     def _build_scheduler(self):
-        if self._current_config is None:
+        if self._current_schedule is None:
             raise TypeError
         self._scheduler = Scheduler(
             notify_dates=self.notify_dates,
             fire_times=self.fire_times,
             time_generator=self.fire_time_generator,
             stop_event=self._stop_event,
-            config_updated_event=self._config_updated,
+            schedule_updated_event=self._schedule_updated,
         )
 
     def stop(self):
         self._stop_event.set()
-        self._config_updated.set()
+        self._schedule_updated.set()
 
-    def update_config(self, new_config: dict):
-        self._queue.put(new_config)
-        self._config_updated.set()
+    def update_schedule(self, new_schedule: dict):
+        self._queue.put(new_schedule)
+        self._schedule_updated.set()
 
     def run(self):
         self._loop()

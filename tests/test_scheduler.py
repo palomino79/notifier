@@ -62,7 +62,7 @@ def test__should_send_returns_true_when_nd_should_notify(monkeypatch):
     sched.fire_times = []
     sched.time_generator = iter([])  # unused for this test
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act & Assert:
     assert sched._should_send(fake_nd, now) is True
@@ -81,7 +81,7 @@ def test__should_send_catches_NotifyTimeAbsentError(monkeypatch):
     sched.fire_times = []
     sched.time_generator = iter([])
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act & Assert: _should_send should swallow the exception and return False
     assert sched._should_send(fake_nd, datetime.now()) is False
@@ -100,7 +100,7 @@ def test__should_send_catches_DateAbsentError(monkeypatch):
     sched.fire_times = []
     sched.time_generator = iter([])
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     assert sched._should_send(fake_nd, datetime.now()) is False
 
@@ -122,7 +122,7 @@ def test__notify_dates_and_fire_times_pairs_up_correctly():
     sched.fire_times = [t1, t2]
     sched.time_generator = iter([])
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act:
     pairs = sched._notify_dates_and_fire_times
@@ -157,7 +157,7 @@ def test_send_invokes_notify_only_when_should_send(monkeypatch, patch_notify):
     sched.fire_times = [t_early, t_late]
     sched.time_generator = iter([])
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act:
     sched.send()
@@ -183,7 +183,7 @@ def test_send_handles_multiple_true_results(monkeypatch, patch_notify):
     sched.fire_times = [t1, t2]
     sched.time_generator = iter([])
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act:
     sched.send()
@@ -211,19 +211,19 @@ def test_wait_returns_false_when_next_time_already_passed():
     sched.fire_times = [past_time]
     sched.time_generator = gen
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Act:
     interrupted = sched.wait()
 
     # Assert:
     #   Because gen yields past_time, until_next_time = max((past_time - now).seconds, 0) == 0,
-    #   so config_updated_event.wait(0) returns False (it’s not set), and stop_event.is_set() is False.
+    #   so schedule_updated_event.wait(0) returns False (it’s not set), and stop_event.is_set() is False.
     assert interrupted is False
 
 
-def test_wait_returns_true_when_config_updated_is_set_before_wait():
-    # Arrange: A future time, but config_updated_event is already set.
+def test_wait_returns_true_when_schedule_updated_is_set_before_wait():
+    # Arrange: A future time, but schedule_updated_event is already set.
     future_time = datetime.now() + timedelta(hours=1)
     gen = iter([future_time])
 
@@ -232,13 +232,13 @@ def test_wait_returns_true_when_config_updated_is_set_before_wait():
     sched.fire_times = [future_time]
     sched.time_generator = gen
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
-    sched.config_updated_event.set()  # simulate “config changed” before wait
+    sched.schedule_updated_event = Event()
+    sched.schedule_updated_event.set()  # simulate “schedule changed” before wait
 
     # Act:
     interrupted = sched.wait()
 
-    # Assert: config_updated_event.wait(...) will return True immediately
+    # Assert: schedule_updated_event.wait(...) will return True immediately
     assert interrupted is True
 
 
@@ -254,14 +254,14 @@ def test_wait_returns_true_when_stop_event_is_set_during_wait():
     sched.fire_times = [future_time]
     sched.time_generator = gen
     sched.stop_event = Event()
-    sched.config_updated_event = Event()
+    sched.schedule_updated_event = Event()
 
     # Kick off a thread that sets stop_event after 0.01s
     def set_stop_later():
         time_to_sleep = 0.01
         threading.Event().wait(timeout=time_to_sleep)
         sched.stop_event.set()
-        sched.config_updated_event.set()
+        sched.schedule_updated_event.set()
 
     killer = threading.Thread(target=set_stop_later, daemon=True)
     killer.start()
