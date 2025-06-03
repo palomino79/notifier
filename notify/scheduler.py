@@ -1,65 +1,61 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Generator
+from typing import List, Generator, Optional
 from threading import Event
-import requests
-from .notify_dates import NotifyDate, NotifyTimeAbsentError, DateAbsentError
-from .vars import NOTIFICATION_URL, SUPPRESS_SSL_WARNINGS
+from time import sleep
+from .scheduled_dates import ScheduledDate
+from .vars import TIMEZONE
 from .log_setup import logger
-
-
-if SUPPRESS_SSL_WARNINGS:
-    import urllib3
-
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-
-def post_message(message: str):
-    try:
-        requests.post(NOTIFICATION_URL, data=message, verify=False)
-    except requests.HTTPError as e:
-        print(e)
-
-
-def notify(nd: NotifyDate):
-    title = nd.title
-    for_ = nd.for_
-    date: datetime = nd.date if not isinstance(nd.date, dict) else nd.conditional_date
-    ctime = date.ctime()
-    message = f"Upcoming reminder: {title}. For: {for_}. When: {ctime}"
-    logger.info(f'Posting message: "{message}"')
-    post_message(message)
+from .send_notification import send_notification
 
 
 @dataclass
 class Scheduler:
-    notify_dates: List[NotifyDate]
-    fire_times: List[datetime]
-    time_generator: Generator
+    schedule: dict
     stop_event: Event
     schedule_updated_event: Event
+    _scheduled_dates: List[ScheduledDate] = field(default_factory=list)
+    _generator: Optional[Generator] = field(default=None)
 
     @property
-    def _notify_dates_and_fire_times(self):
-        return [(nd, t) for nd in self.notify_dates for t in self.fire_times]
+    def scheduled_dates(self) -> List[ScheduledDate]:
+        if not self._scheduled_dates:
+            this = [
+                ScheduledDate.continue_with_errors(**j)
+                for i in self.schedule.values()
+                for j in i.values()
+            ]
+            self._scheduled_dates = [x for x in this if x]
+            if not self._scheduled_dates:
+                raise ValueError("No dates provided.")
+        return self._scheduled_dates
 
-    def _should_send(self, nd: NotifyDate, t: datetime) -> bool:
-        try:
-            if nd.should_notify(t):
-                return True
-        except NotifyTimeAbsentError:
-            logger.error(f"No notify_time set for notify_date {nd.title}")
-        except DateAbsentError:
-            logger.error(f"No date set for notify_date {nd.title}")
-        except (ValueError, TypeError) as e:
-            logger.error(e, exc_info=True)
-        return False
+    @property
+    def next_fire_time(self):
+        if not self._generator:
+            self._generator = self.fire_time_generator()
+        return next(self._generator)
+
+    def fire_time_generator(self) -> Generator:
+        while True:
+            if not self.fire_times:
+                raise StopIteration
+            for t in self.fire_times:
+                now = datetime.now(tz=TIMEZONE)
+                if t > now:
+                    yield t
+            for s in self.scheduled_dates:
+                s.increment_notify_time(1)
+
+    @property
+    def fire_times(self):
+        return sorted(list({n.notify_time for n in self.scheduled_dates}))
 
     def send(self):
-        for nd in self.notify_dates:
+        for sd in self.scheduled_dates:
             for t in self.fire_times:
-                if self._should_send(nd, t):
-                    notify(nd)
+                if sd.should_notify(t):
+                    send_notification(sd)
                     break
 
     def wait(self) -> bool:
@@ -67,14 +63,17 @@ class Scheduler:
         Returns True if the wait was interrupted.
         Otherwise False (wait completed)
         """
-        next_time = next(self.time_generator)  # type: ignore
-        until_next_time = max((next_time - datetime.now()).total_seconds(), 0)
-        logger.info(
-            f"New sleep target: {next_time.ctime()}. "
-            f"Sleeping for {until_next_time} seconds."
-        )
-        wait_interrupted = (
-            self.schedule_updated_event.wait(until_next_time)
-            or self.stop_event.is_set()
-        )
+        try:
+            nft = self.next_fire_time
+            until_next_time = max((nft - datetime.now()).total_seconds(), 0)
+            logger.info(
+                f"New sleep target: {nft.ctime()}. Sleeping for {until_next_time} seconds."
+            )
+            wait_interrupted = (
+                self.schedule_updated_event.wait(until_next_time)
+                or self.stop_event.is_set()
+            )
+        except StopIteration:
+            sleep(5)
+            return False
         return wait_interrupted
