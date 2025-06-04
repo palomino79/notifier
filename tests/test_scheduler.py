@@ -2,272 +2,239 @@ import pytest
 import threading
 from datetime import datetime, timedelta
 from threading import Event
+from unittest import TestCase
 from notify import scheduler
+from notify.vars import TIMEZONE
 
 
-class FakeNotifyDate:
+class FakeScheduledDate:
     def __init__(
-        self, title: str, for_: str, should_return: bool, raise_exc: Exception = None
+        self,
+        description: str,
+        notify_time: datetime,
+        should_return: bool,
+        date: str | None = None,
+        raise_exc: Exception = None,
     ):
         """
         - title, for_ are just stored for logging/inspection
         - should_return controls what should_notify(...) returns
         - raise_exc, if not None, is raised when should_notify(...) is called
         """
-        self.title = title
-        self.for_ = for_
+        self.description = description
+        self.notify_time = notify_time
+        self.date = date
         self._should = should_return
         self._raise = raise_exc
+        self._increment_called = False
+
+    @classmethod
+    def continue_with_errors(cls, **kwargs):
+        if not kwargs.get("date"):
+            return None
+        return cls(**kwargs)
 
     def should_notify(self, t: datetime) -> bool:
         if self._raise:
             raise self._raise
         return self._should
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2) A pytest fixture that monkey-patches the module-level notify()
-#    so we can observe calls without performing HTTP.
-# ─────────────────────────────────────────────────────────────────────────────
+    def increment_notify_time(self, *args, **kwargs):
+        self._increment_called = True
 
 
 @pytest.fixture(autouse=True)
-def patch_notify(monkeypatch):
-    """
-    Replace scheduler.notify(nd) with a fake that simply records the nd.title
-    in a list, so we can assert how many times or with what args it was called.
-    """
+def patch_send_notification(monkeypatch):
     called = []
 
     def fake_notify(nd_instance):
-        called.append(nd_instance.title)
+        called.append(nd_instance.description)
 
-    monkeypatch.setattr("notify.scheduler.notify", fake_notify)
+    monkeypatch.setattr("notify.scheduler.send_notification", fake_notify)
     return called
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 3) Tests for _should_send()
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def test__should_send_returns_true_when_nd_should_notify(monkeypatch):
-    # Arrange: A FakeNotifyDate whose should_notify returns True
-    now = datetime.now()
-    fake_nd = FakeNotifyDate(title="T1", for_="you", should_return=True)
-    # We can pass any datetime, here `now`
+def get_preconfigured_scheduler(scheduled_dates=None, _generator=None):
     sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    # Manually set the attributes needed by _should_send:
-    sched.notify_dates = []
-    sched.fire_times = []
-    sched.time_generator = iter([])  # unused for this test
+    sched._scheduled_dates = scheduled_dates or []
     sched.stop_event = Event()
     sched.schedule_updated_event = Event()
-
-    # Act & Assert:
-    assert sched._should_send(fake_nd, now) is True
-
-
-def test__should_send_catches_NotifyTimeAbsentError(monkeypatch):
-    # Arrange: FakeNotifyDate that raises NotifyTimeAbsentError
-    fake_nd = FakeNotifyDate(
-        title="T2",
-        for_="me",
-        should_return=False,
-        raise_exc=scheduler.NotifyTimeAbsentError(),
-    )
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = []
-    sched.fire_times = []
-    sched.time_generator = iter([])
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-
-    # Act & Assert: _should_send should swallow the exception and return False
-    assert sched._should_send(fake_nd, datetime.now()) is False
+    if _generator:
+        sched._generator = _generator
+    return sched
 
 
-def test__should_send_catches_DateAbsentError(monkeypatch):
-    # Arrange: FakeNotifyDate that raises DateAbsentError
-    fake_nd = FakeNotifyDate(
-        title="T3",
-        for_="none",
-        should_return=False,
-        raise_exc=scheduler.DateAbsentError(),
-    )
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = []
-    sched.fire_times = []
-    sched.time_generator = iter([])
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
+def test_scheduled_dates_filters_invalid_data():
+    """
+    ScheduledDate MUST have a date, notify time, and description
+    """
+    good = {"date": "January 10", "notify_time": "12:00 PM", "description": "Good date"}
+    bad = {"description": "Bad date"}
 
-    assert sched._should_send(fake_nd, datetime.now()) is False
+    sched = get_preconfigured_scheduler()
+    sched.schedule = {"days": {"good": good, "bad": bad}}
+
+    assert len(sched.scheduled_dates) == 1
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 4) Tests for _notify_dates_and_fire_times (property)
-# ─────────────────────────────────────────────────────────────────────────────
+def test_fire_times_sorts_in_correct_order():
+    d1 = {"date": "January 10", "notify_time": "12:00 PM", "description": "Good date"}
+    d2 = {"date": "January 11", "notify_time": "01:00 PM", "description": "Good date"}
+    d3 = {"date": "January 12", "notify_time": "02:00 PM", "description": "Good date"}
+
+    sched = get_preconfigured_scheduler()
+    sched.schedule = {"days": {"d1": d1, "d2": d2, "d3": d3}}
+
+    assert len(sched.fire_times) == 3
+    last_time = None
+    for i, d in enumerate(sched.fire_times):
+        if last_time is None:
+            last_time = d
+        else:
+            assert d > last_time
+            last_time = d
 
 
-def test__notify_dates_and_fire_times_pairs_up_correctly():
-    # Arrange: Two fake NotifyDates and two fire_times
-    d1 = FakeNotifyDate("A", "x", should_return=False)
-    d2 = FakeNotifyDate("B", "y", should_return=False)
-    t1 = datetime(2025, 1, 1, 9, 0)
-    t2 = datetime(2025, 1, 1, 10, 0)
+def test_send_invokes_notify_once_per_iteration():
+    d1 = {"date": "January 10", "notify_time": "12:00 PM", "description": "Good date"}
+    d2 = {"date": "January 11", "notify_time": "01:00 PM", "description": "Good date"}
+    d3 = {"date": "January 12", "notify_time": "02:00 PM", "description": "Good date"}
 
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = [d1, d2]
-    sched.fire_times = [t1, t2]
-    sched.time_generator = iter([])
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-
-    # Act:
-    pairs = sched._notify_dates_and_fire_times
-
-    # Assert: Should have exactly 4 pairs in the Cartesian product, in a consistent order
-    assert len(pairs) == 4
-    expected = [(d1, t1), (d1, t2), (d2, t1), (d2, t2)]
-    assert pairs == expected
+    sched = get_preconfigured_scheduler()
+    sched.schedule = {"days": {"d1": d1, "d2": d2, "d3": d3}}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5) Tests for send()
-# ─────────────────────────────────────────────────────────────────────────────
+def test_fire_time_generator_raises_error():
+    sched = get_preconfigured_scheduler()
+    sched.schedule = {"days": {"d1": {}}}
+
+    try:
+        sched.next_fire_time
+    except ValueError:
+        assert True
+    else:
+        assert False
 
 
-def test_send_invokes_notify_only_when_should_send(monkeypatch, patch_notify):
-    # Arrange:
-    #   - One FakeNotifyDate that returns True for the earlier time,
-    #   - One that returns False,
-    #   - Fire times = [ t_early, t_late ]
+def test_fire_time_generator_inrements_notify_time(monkeypatch):
+    """
+    if t > now:
+        yield t  (where t is fire time)
+    then increment fire_times
+    Q: How to make t always greater than now? Where t is a dateime replacing the hour
+    and minute frm now with that of the notify_time.
+    """
+    d1 = {"date": "January 10", "notify_time": "12:00 PM", "description": "Good date"}
+
+    sched = get_preconfigured_scheduler()
+    sched.schedule = {"days": {"d1": d1}}
+
+    notify_1 = sched.scheduled_dates[0].notify_time
+
+    class fake_datetime:
+        @staticmethod
+        def now(*args, **kwargs):
+            return datetime.now(tz=TIMEZONE) - timedelta(days=10000)
+
+    monkeypatch.setattr("notify.scheduler.datetime", fake_datetime)
+
+    sched.next_fire_time
+    sched.next_fire_time
+    notify_2 = sched.scheduled_dates[0].notify_time
+    delta = notify_2 - notify_1
+    assert delta.days == 1
+
+
+def test_send_invokes_notify_only_when_should_send(patch_send_notification):
     now = datetime.now()
     t_early = now + timedelta(minutes=1)
     t_late = now + timedelta(hours=1)
+    d_true = FakeScheduledDate("HitEarly", t_early, should_return=True)
+    d_false = FakeScheduledDate("NeverHit", t_late, should_return=False)
 
-    # d_true should fire on t_early, but not on t_late
-    d_true = FakeNotifyDate("HitEarly", "whoever", should_return=True)
-    # d_false never fires
-    d_false = FakeNotifyDate("NeverHit", "nowhere", should_return=False)
-
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = [d_true, d_false]
-    sched.fire_times = [t_early, t_late]
-    sched.time_generator = iter([])
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-
-    # Act:
+    sched = get_preconfigured_scheduler([d_true, d_false])
     sched.send()
 
-    # Assert:
-    #   - “HitEarly” should have been passed to notify exactly once (on the first matching t_early).
-    #   - “NeverHit” should never appear.
-    assert patch_notify == ["HitEarly"]
+    assert patch_send_notification == ["HitEarly"]
 
 
-def test_send_handles_multiple_true_results(monkeypatch, patch_notify):
-    # Arrange:
+def test_send_handles_multiple_true_results(monkeypatch, patch_send_notification):
     now = datetime.now()
     t1 = now + timedelta(minutes=1)
     t2 = now + timedelta(minutes=2)
 
-    # Two FakeNotifyDates, both returning True for both times
-    d1 = FakeNotifyDate("D1", "x", should_return=True)
-    d2 = FakeNotifyDate("D2", "y", should_return=True)
+    d1 = FakeScheduledDate("D1", t1, should_return=True)
+    d2 = FakeScheduledDate("D2", t2, should_return=True)
 
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = [d1, d2]
-    sched.fire_times = [t1, t2]
-    sched.time_generator = iter([])
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-
-    # Act:
+    sched = get_preconfigured_scheduler([d1, d2])
     sched.send()
 
-    # Assert:
-    #   Each (d1, t1), (d1, t2), (d2, t1), (d2, t2) is tested. As soon as a (nd → t) pair is True,
-    #   we break for that nd and move to the next nd. So each nd should notify exactly once.
-    assert sorted(patch_notify) == ["D1", "D2"]
-    assert patch_notify.count("D1") == 1
-    assert patch_notify.count("D2") == 1
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 6) Tests for wait()
-# ─────────────────────────────────────────────────────────────────────────────
+    assert sorted(patch_send_notification) == ["D1", "D2"]
+    assert patch_send_notification.count("D1") == 1
+    assert patch_send_notification.count("D2") == 1
 
 
 def test_wait_returns_false_when_next_time_already_passed():
-    # Arrange: A generator that yields “one time in the past,” so until_next_time == 0
+    """
+    This does not need to be tested because the nature of the
+    underlying generator makes this functionally impossible.
+    """
     past_time = datetime.now() - timedelta(seconds=1)
-    gen = iter([past_time])
 
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = []
-    sched.fire_times = [past_time]
-    sched.time_generator = gen
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
+    sched = get_preconfigured_scheduler(
+        [FakeScheduledDate("A", datetime.now(), should_return=True)],
+        _generator=iter([past_time]),
+    )
 
-    # Act:
     interrupted = sched.wait()
-
-    # Assert:
-    #   Because gen yields past_time, until_next_time = max((past_time - now).seconds, 0) == 0,
-    #   so schedule_updated_event.wait(0) returns False (it’s not set), and stop_event.is_set() is False.
     assert interrupted is False
 
 
 def test_wait_returns_true_when_schedule_updated_is_set_before_wait():
-    # Arrange: A future time, but schedule_updated_event is already set.
     future_time = datetime.now() + timedelta(hours=1)
-    gen = iter([future_time])
 
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = []
-    sched.fire_times = [future_time]
-    sched.time_generator = gen
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-    sched.schedule_updated_event.set()  # simulate “schedule changed” before wait
-
-    # Act:
+    sched = get_preconfigured_scheduler(_generator=iter([future_time]))
+    sched.schedule_updated_event.set()
     interrupted = sched.wait()
 
-    # Assert: schedule_updated_event.wait(...) will return True immediately
+    assert interrupted is True
+
+
+def test_wait_returns_true_when_schedule_updatd_event_is_set_during_wait():
+    """
+    This test is fine because that can happen, if unlikely to occur.
+    """
+    future_time = datetime.now() + timedelta(minutes=5)
+
+    sched = get_preconfigured_scheduler(_generator=iter([future_time]))
+
+    def set_stop_later():
+        time_to_sleep = 0.02
+        threading.Event().wait(timeout=time_to_sleep)
+        sched.schedule_updated_event.set()
+
+    killer = threading.Thread(target=set_stop_later, daemon=True)
+    killer.start()
+
+    interrupted = sched.wait()
+
     assert interrupted is True
 
 
 def test_wait_returns_true_when_stop_event_is_set_during_wait():
-    # Arrange:
-    #   - A future time (so normally wait(...) would block),
-    #   - A separate thread that sets stop_event after a tiny delay.
+    """
+    This test is fine because that can happen, if unlikely to occur.
+    """
     future_time = datetime.now() + timedelta(minutes=5)
-    gen = iter([future_time])
+    sched = get_preconfigured_scheduler(_generator=iter([future_time]))
 
-    sched = scheduler.Scheduler.__new__(scheduler.Scheduler)
-    sched.notify_dates = []
-    sched.fire_times = [future_time]
-    sched.time_generator = gen
-    sched.stop_event = Event()
-    sched.schedule_updated_event = Event()
-
-    # Kick off a thread that sets stop_event after 0.01s
     def set_stop_later():
-        time_to_sleep = 0.01
+        time_to_sleep = 0.02
         threading.Event().wait(timeout=time_to_sleep)
         sched.stop_event.set()
         sched.schedule_updated_event.set()
 
     killer = threading.Thread(target=set_stop_later, daemon=True)
     killer.start()
-
-    # Act:
     interrupted = sched.wait()
-
-    # Assert: since stop_event is set while waiting, wait() returns True
     assert interrupted is True

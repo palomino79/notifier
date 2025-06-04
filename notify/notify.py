@@ -1,14 +1,12 @@
 import hashlib
-import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable
 from queue import Queue, Empty
 from threading import Thread, Event
 from functools import cached_property
 from yaml import load, Loader  # type: ignore
 from .scheduler import Scheduler
-from .notify_dates import NotifyDate
-from .vars import TIMEZONE
+from .scheduled_dates import ScheduledDate
 from .log_setup import logger
 
 
@@ -100,47 +98,6 @@ class CronRunner(Thread):
             f"CronRunner started with block interval of {block_interval} seconds."
         )
 
-    @property
-    def fire_time_generator(self):
-        while True:
-            for t in self.fire_times:
-                now = datetime.now(tz=TIMEZONE)
-                if t > now:
-                    yield t
-            self._fire_time_delta += 1
-            if self._scheduler:
-                self._scheduler.fire_times = self.fire_times
-
-    @property
-    def fire_times(self):
-        now = datetime.now(tz=TIMEZONE)
-        times = []
-        if not self._current_schedule:
-            return []
-        for value in self._current_schedule.values():
-            for item in value.values():
-                time = item.get("notify_time")
-                if not time:
-                    logger.warning("No time found. Continuing.")
-                    continue
-                temp = datetime.strptime(time, "%I:%M %p").time()
-                dt = now.replace(
-                    hour=temp.hour, minute=temp.minute, second=0, microsecond=0
-                )
-                times.append(dt + timedelta(days=self._fire_time_delta))
-        times = list(set(times))
-        return sorted(times)
-
-    @property
-    def notify_dates(self):
-        if not self._current_schedule:
-            return []
-        return [
-            NotifyDate(x)
-            for item in self._current_schedule.values()
-            for x in item.values()
-        ]
-
     def _run_once(self):
         try:
             if self._schedule_updated.is_set():
@@ -173,9 +130,7 @@ class CronRunner(Thread):
         if self._current_schedule is None:
             raise TypeError
         self._scheduler = Scheduler(
-            notify_dates=self.notify_dates,
-            fire_times=self.fire_times,
-            time_generator=self.fire_time_generator,
+            schedule=self._current_schedule,
             stop_event=self._stop_event,
             schedule_updated_event=self._schedule_updated,
         )
